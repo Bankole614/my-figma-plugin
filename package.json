@@ -1,0 +1,13 @@
+{
+  "name": "design-version-control",
+  "version": "0.1.0",
+  "devDependencies": {
+    "typescript": "^4.9.5",
+    "@figma/plugin-typings": "^1.27.0"
+  },
+  "scripts": {
+  "build": "tsc code.ts --outFile code.js",
+  "watch": "tsc code.ts --outFile code.js --watch"
+}
+
+}

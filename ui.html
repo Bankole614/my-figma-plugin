@@ -1,0 +1,166 @@
+<!-- ui.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    #login, #main { margin-bottom: 20px; }
+    #login input, #main textarea { width: 100%; box-sizing: border-box; margin-top: 5px; }
+    #commitMessage { height: 4em; }
+    #historyList { list-style-type: none; padding-left: 0; }
+  </style>
+</head>
+<body>
+  <!-- Login Form -->
+  <div id="login">
+    <h3>Login</h3>
+    <input id="emailInput" type="email" placeholder="Enter your email" />
+    <button id="loginBtn">Send Magic Link</button>
+  </div>
+
+  <!-- Main Interface (hidden until login) -->
+  <div id="main" style="display:none;">
+    <h3>Version Control</h3>
+    <p>Project: <span id="projectName">Loading...</span></p>
+    <p>Signed in as: <span id="userEmail"></span></p>
+    <textarea id="commitMessage" placeholder="Commit message"></textarea><br/>
+    <button id="commitBtn">Commit Version</button>
+    <h4>Version History</h4>
+    <ul id="historyList"></ul>
+  </div>
+
+  <!-- Supabase JS client (v2) -->
+  <!-- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script> -->
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js';
+    // ---------- Supabase Client Setup ----------
+    // Replace with your Supabase project credentials
+    const SUPABASE_URL = 'https://pqheugqatduidilstxal.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxaGV1Z3FhdGR1aWRpbHN0eGFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTM0MjYsImV4cCI6MjA2NjUyOTQyNn0.YhdKsXJSnNJwlbAhX8cpZBG50nbmJDwjaNkd4Sn4A9M';
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    let projectName = '';
+    let userEmail = '';
+
+    // ---------- Handle messages from code.ts ----------
+    window.onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+      if (msg.type === 'init') {
+        // Receive initial project name from code.ts
+        projectName = msg.projectName;
+        document.getElementById('projectName').innerText = projectName;
+      }
+      if (msg.type === 'svg') {
+        // Received SVG data from code.ts after export
+        const svgBase64 = msg.svg;
+        // Convert Base64 to ArrayBuffer for upload
+        function base64ToArrayBuffer(base64) {
+          const binary = window.atob(base64);
+          const len = binary.length;
+          const buffer = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            buffer[i] = binary.charCodeAt(i);
+          }
+          return buffer;
+        }
+        const svgBuffer = base64ToArrayBuffer(svgBase64);
+        const filename = `${projectName}/${Date.now()}.svg`;
+
+        // Upload SVG to Supabase Storage (public bucket)
+        const { data: uploadData, error: uploadError } = await supabase
+          .storage
+          .from('your-public-bucket')
+          .upload(filename, svgBuffer, { contentType: 'image/svg+xml' });
+        if (uploadError) {
+          console.error('Upload error:', uploadError.message);
+          alert('Error uploading SVG: ' + uploadError.message);
+          return;
+        }
+        // Get public URL of the uploaded SVG
+        const { data: publicData } = supabase
+          .storage
+          .from('your-public-bucket')
+          .getPublicUrl(filename);
+        const publicUrl = publicData.publicUrl;
+
+        // Insert version metadata into Supabase Postgres
+        const commitMsg = document.getElementById('commitMessage').value;
+        const { data: insertData, error: insertError } = await supabase
+          .from('versions')
+          .insert({
+            project_name: projectName,
+            user_email: userEmail,
+            commit_message: commitMsg,
+            file_url: publicUrl,
+            timestamp: new Date().toISOString()
+          });
+        if (insertError) {
+          console.error('Insert error:', insertError.message);
+          alert('Error saving commit: ' + insertError.message);
+          return;
+        }
+        // Clear input and refresh history
+        document.getElementById('commitMessage').value = '';
+        await loadHistory();
+        alert('Version committed successfully!');
+      }
+    };
+
+    // ---------- Login Logic ----------
+    document.getElementById('loginBtn').onclick = async () => {
+    console.log('🔵 Login button clicked');
+    const email = document.getElementById('emailInput').value.trim();
+    console.log('Input email:', email);
+    if (!email) {
+      alert('Please enter an email.');
+      return;
+    }
+    // now call Supabase
+    try {
+      const { data, error } = await supabase.auth.signInWithOtp({ email });
+      console.log('supabase.auth.signInWithOtp result:', { data, error });
+      if (error) throw error;
+      alert('Magic link sent! Check your inbox.');
+      // … rest of your flow …
+    } catch (err) {
+      console.error('Auth error:', err);
+      alert('Error sending magic link: ' + err.message);
+    }
+  };
+    // ---------- Load Version History ----------
+    async function loadHistory() {
+      if (!projectName) return;
+      const { data: versions, error } = await supabase
+        .from('versions')
+        .select('commit_message, timestamp')
+        .eq('project_name', projectName)
+        .order('timestamp', { ascending: false });
+      if (error) {
+        console.error('Load history error:', error.message);
+        return;
+      }
+      const historyList = document.getElementById('historyList');
+      historyList.innerHTML = '';
+      versions.forEach(v => {
+        const li = document.createElement('li');
+        const time = new Date(v.timestamp).toLocaleString();
+        li.textContent = `${time}: ${v.commit_message}`;
+        historyList.appendChild(li);
+      });
+    }
+
+    // ---------- Commit Button Handler ----------
+    document.getElementById('commitBtn').onclick = () => {
+      const msg = document.getElementById('commitMessage').value.trim();
+      if (!msg) {
+        alert('Enter a commit message.');
+        return;
+      }
+      // Request the SVG export from code.ts
+      parent.postMessage({ pluginMessage: { type: 'export-svg' } }, '*');
+      // The rest of the process continues in window.onmessage (when 'svg' arrives)
+    };
+  </script>
+</body>
+</html>
