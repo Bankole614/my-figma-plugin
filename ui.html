@@ -118,10 +118,13 @@
     }
     // now call Supabase
     try {
-      const { data, error } = await supabase.auth.signInWithOtp({ email });
+      const { data, error } = await supabase.auth.signInWithOtp({ email, options: {
+    redirectTo: 'https://your-domain.com/auth-callback'
+  } });
       console.log('supabase.auth.signInWithOtp result:', { data, error });
       if (error) throw error;
       alert('Magic link sent! Check your inbox.');
+      pollForSession(email);
       // … rest of your flow …
     } catch (err) {
       console.error('Auth error:', err);
@@ -161,6 +164,46 @@
       parent.postMessage({ pluginMessage: { type: 'export-svg' } }, '*');
       // The rest of the process continues in window.onmessage (when 'svg' arrives)
     };
+
+    async function pollForSession(email, tries = 0) {
+  if (tries > 30) {
+    alert('Login timed out. Please try again.');
+    return;
+  }
+
+  await new Promise(r => setTimeout(r, 2000));
+
+  const { data, error } = await supabase
+    .from('plugin_sessions')
+    .select('access_token, refresh_token')
+    .eq('email', email)
+    .single();
+
+  if (error || !data) {
+    pollForSession(email, tries + 1);
+    return;
+  }
+
+  // Set Supabase session in the plugin
+  const { access_token, refresh_token } = data;
+  const { error: sessionError } = await supabase.auth.setSession({
+    access_token,
+    refresh_token
+  });
+
+  if (sessionError) {
+    alert('Session error: ' + sessionError.message);
+    return;
+  }
+
+  // User is now logged in!
+  userEmail = email;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.getElementById('userEmail').innerText = userEmail;
+  loadHistory();
+}
+
   </script>
 </body>
 </html>
