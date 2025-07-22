@@ -1,210 +1,175 @@
-<!-- ui.html -->
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
+  <title>Design VC Plugin</title>
   <style>
     body { font-family: sans-serif; margin: 20px; }
-    #login, #main { margin-bottom: 20px; }
-    #login input, #main textarea { width: 100%; box-sizing: border-box; margin-top: 5px; }
-    #commitMessage { height: 4em; }
-    #historyList { list-style-type: none; padding-left: 0; }
+    #login, #projects, #main { margin-bottom: 20px; }
+    input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 6px; }
+    #projectList { list-style: none; padding: 0; }
+    li { cursor: pointer; padding: 4px; border-bottom: 1px solid #ddd; }
+    li:hover { background: #f0f0f0; }
   </style>
 </head>
 <body>
-  <!-- Login Form -->
+
+  <!-- LOGIN UI -->
   <div id="login">
     <h3>Login</h3>
-    <input id="emailInput" type="email" placeholder="Enter your email" />
-    <button id="loginBtn">Send Magic Link</button>
+    <input id="emailInput" type="email" placeholder="Email" />
+    <input id="passwordInput" type="password" placeholder="Password" />
+    <button id="btnLogin">Log In</button>
+    <p id="loginError" style="color:red"></p>
   </div>
 
-  <!-- Main Interface (hidden until login) -->
-  <div id="main" style="display:none;">
-    <h3>Version Control</h3>
-    <p>Project: <span id="projectName">Loading...</span></p>
-    <p>Signed in as: <span id="userEmail"></span></p>
-    <textarea id="commitMessage" placeholder="Commit message"></textarea><br/>
-    <button id="commitBtn">Commit Version</button>
-    <h4>Version History</h4>
-    <ul id="historyList"></ul>
+  <!-- PROJECT SELECTION UI -->
+  <div id="projects" style="display:none">
+    <h3>Your Projects</h3>
+    <ul id="projectList"></ul>
+    <h4>Create New Project</h4>
+    <input id="newName" placeholder="Project Name" />
+    <textarea id="newDesc" rows="2" placeholder="Description (optional)"></textarea>
+    <button id="btnCreate">Create Project</button>
+    <p id="projError" style="color:red"></p>
   </div>
 
-  <!-- Supabase JS client (v2) -->
-  <!-- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script> -->
-  <script type="module">
-    import { createClient } from 'https://esm.sh/@supabase/supabase-js';
-    // ---------- Supabase Client Setup ----------
-    // Replace with your Supabase project credentials
-    const SUPABASE_URL = 'https://pqheugqatduidilstxal.supabase.co';
-    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxaGV1Z3FhdGR1aWRpbHN0eGFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NTM0MjYsImV4cCI6MjA2NjUyOTQyNn0.YhdKsXJSnNJwlbAhX8cpZBG50nbmJDwjaNkd4Sn4A9M';
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  <!-- MAIN (after project selected) -->
+  <div id="main" style="display:none">
+    <h3 id="selProjectName"></h3>
+    <!-- Commit UI goes here -->
+  </div>
 
-    let projectName = '';
-    let userEmail = '';
+  <script>
+const BACKEND = 'https://design-vc-backend.vercel.app/api';
+let jwt = null;
+let selectedProject = null;
 
-    // ---------- Handle messages from code.ts ----------
-    window.onmessage = async (event) => {
-      const msg = event.data.pluginMessage;
-      if (!msg) return;
-      if (msg.type === 'init') {
-        // Receive initial project name from code.ts
-        projectName = msg.projectName;
-        document.getElementById('projectName').innerText = projectName;
-      }
-      if (msg.type === 'svg') {
-        // Received SVG data from code.ts after export
-        const svgBase64 = msg.svg;
-        // Convert Base64 to ArrayBuffer for upload
-        function base64ToArrayBuffer(base64) {
-          const binary = window.atob(base64);
-          const len = binary.length;
-          const buffer = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
-            buffer[i] = binary.charCodeAt(i);
-          }
-          return buffer;
-        }
-        const svgBuffer = base64ToArrayBuffer(svgBase64);
-        const filename = `${projectName}/${Date.now()}.svg`;
+// DOM elements
+const loginDiv = document.getElementById('login');
+const projectsDiv = document.getElementById('projects');
+const mainDiv = document.getElementById('main');
 
-        // Upload SVG to Supabase Storage (public bucket)
-        const { data: uploadData, error: uploadError } = await supabase
-          .storage
-          .from('your-public-bucket')
-          .upload(filename, svgBuffer, { contentType: 'image/svg+xml' });
-        if (uploadError) {
-          console.error('Upload error:', uploadError.message);
-          alert('Error uploading SVG: ' + uploadError.message);
-          return;
-        }
-        // Get public URL of the uploaded SVG
-        const { data: publicData } = supabase
-          .storage
-          .from('your-public-bucket')
-          .getPublicUrl(filename);
-        const publicUrl = publicData.publicUrl;
+const emailInput = document.getElementById('emailInput');
+const passwordInput = document.getElementById('passwordInput');
+const btnLogin = document.getElementById('btnLogin');
+const loginError = document.getElementById('loginError');
 
-        // Insert version metadata into Supabase Postgres
-        const commitMsg = document.getElementById('commitMessage').value;
-        const { data: insertData, error: insertError } = await supabase
-          .from('versions')
-          .insert({
-            project_name: projectName,
-            user_email: userEmail,
-            commit_message: commitMsg,
-            file_url: publicUrl,
-            timestamp: new Date().toISOString()
-          });
-        if (insertError) {
-          console.error('Insert error:', insertError.message);
-          alert('Error saving commit: ' + insertError.message);
-          return;
-        }
-        // Clear input and refresh history
-        document.getElementById('commitMessage').value = '';
-        await loadHistory();
-        alert('Version committed successfully!');
-      }
-    };
+const newNameInput = document.getElementById('newName');
+const newDescInput = document.getElementById('newDesc');
+const btnCreate = document.getElementById('btnCreate');
+const projError = document.getElementById('projError');
+const projectList = document.getElementById('projectList');
+const selProjectName = document.getElementById('selProjectName');
 
-    // ---------- Login Logic ----------
-    document.getElementById('loginBtn').onclick = async () => {
-    console.log('🔵 Login button clicked');
-    const email = document.getElementById('emailInput').value.trim();
-    console.log('Input email:', email);
-    if (!email) {
-      alert('Please enter an email.');
-      return;
-    }
-    // now call Supabase
-    try {
-      const { data, error } = await supabase.auth.signInWithOtp({ email, options: {
-    redirectTo: 'https://auth-callback-beryl.vercel.app'
-  } });
-      console.log('supabase.auth.signInWithOtp result:', { data, error });
-      if (error) throw error;
-      alert('Magic link sent! Check your inbox.');
-      pollForSession(email);
-      // … rest of your flow …
-    } catch (err) {
-      console.error('Auth error:', err);
-      alert('Error sending magic link: ' + err.message);
-    }
-  };
-    // ---------- Load Version History ----------
-    async function loadHistory() {
-      if (!projectName) return;
-      const { data: versions, error } = await supabase
-        .from('versions')
-        .select('commit_message, timestamp')
-        .eq('project_name', projectName)
-        .order('timestamp', { ascending: false });
-      if (error) {
-        console.error('Load history error:', error.message);
-        return;
-      }
-      const historyList = document.getElementById('historyList');
-      historyList.innerHTML = '';
-      versions.forEach(v => {
-        const li = document.createElement('li');
-        const time = new Date(v.timestamp).toLocaleString();
-        li.textContent = `${time}: ${v.commit_message}`;
-        historyList.appendChild(li);
-      });
-    }
+// Show/hide UI panels
+function showLogin() { loginDiv.style.display = 'block'; projectsDiv.style.display = 'none'; mainDiv.style.display = 'none'; }
+function showProjects() { loginDiv.style.display = 'none'; projectsDiv.style.display = 'block'; mainDiv.style.display = 'none'; }
+function showMain() { loginDiv.style.display = 'none'; projectsDiv.style.display = 'none'; mainDiv.style.display = 'block'; }
 
-    // ---------- Commit Button Handler ----------
-    document.getElementById('commitBtn').onclick = () => {
-      const msg = document.getElementById('commitMessage').value.trim();
-      if (!msg) {
-        alert('Enter a commit message.');
-        return;
-      }
-      // Request the SVG export from code.ts
-      parent.postMessage({ pluginMessage: { type: 'export-svg' } }, '*');
-      // The rest of the process continues in window.onmessage (when 'svg' arrives)
-    };
+// Auto-login if JWT exists
+// (async () => {
+//   jwt = localStorage.getItem('jwt');
+//   if (jwt) {
+//     showProjects();
+//     loadProjects();
+//   }
+// })();
 
-    async function pollForSession(email, tries = 0) {
-  if (tries > 30) {
-    alert('Login timed out. Please try again.');
+// LOGIN
+btnLogin.onclick = async () => {
+  loginError.textContent = '';
+  const emailVal = emailInput.value.trim();
+  const pwVal = passwordInput.value;
+
+  if (!emailVal || !pwVal) {
+    loginError.textContent = 'Enter email + password';
     return;
   }
 
-  await new Promise(r => setTimeout(r, 2000));
+  try {
+    const res = await fetch(`${BACKEND}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: emailVal, password: pwVal })
+    });
 
-  const { data, error } = await supabase
-  .from('plugin_sessions')
-  .select('access_token, refresh_token')
-  .eq('email', email)
-  .maybeSingle(); // <- safer and avoids hard 406s
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Login failed');
 
-
-  if (error || !data) {
-    pollForSession(email, tries + 1);
-    return;
+    jwt = json.token;
+    // localStorage.setItem('jwt', jwt);
+    showProjects();
+    loadProjects();
+  } catch (err) {
+    loginError.textContent = err.message;
   }
+};
 
-  // Set Supabase session in the plugin
-  const { access_token, refresh_token } = data;
-  const { error: sessionError } = await supabase.auth.setSession({
-    access_token,
-    refresh_token
-  });
+// LOAD PROJECTS
+async function loadProjects() {
+  projError.textContent = '';
+  projectList.innerHTML = '';
 
-  if (sessionError) {
-    alert('Session error: ' + sessionError.message);
-    return;
+  try {
+    const res = await fetch(`${BACKEND}/projects`, {
+      headers: { 'Authorization': 'Bearer ' + jwt }
+    });
+
+    if (!res.ok) throw new Error('Fetch failed');
+
+    const { own, shared } = await res.json();
+    const all = own.concat(shared);
+
+    all.forEach(p => {
+      const li = document.createElement('li');
+      li.textContent = p.name;
+      li.onclick = () => {
+        selectedProject = p;
+        selProjectName.innerText = p.name;
+        showMain();
+        // You can add commit UI or send message to code.ts here
+      };
+      projectList.appendChild(li);
+    });
+  } catch (err) {
+    projError.textContent = err.message;
   }
-
-  // User is now logged in!
-  userEmail = email;
-  document.getElementById('login').style.display = 'none';
-  document.getElementById('main').style.display = 'block';
-  document.getElementById('userEmail').innerText = userEmail;
-  loadHistory();
 }
 
-  </script>
+// CREATE PROJECT
+btnCreate.onclick = async () => {
+  projError.textContent = '';
+  const nameVal = newNameInput.value.trim();
+  const descVal = newDescInput.value.trim();
+
+  if (!nameVal) {
+    projError.textContent = 'Project name required';
+    return;
+  }
+
+  try {
+    const res = await fetch(`${BACKEND}/projects`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + jwt
+      },
+      body: JSON.stringify({ name: nameVal, description: descVal })
+    });
+
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Create failed');
+
+    newNameInput.value = '';
+    newDescInput.value = '';
+    loadProjects();
+  } catch (err) {
+    projError.textContent = err.message;
+  }
+};
+</script>
+
+
 </body>
 </html>

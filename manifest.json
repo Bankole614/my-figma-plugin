@@ -1,6 +1,6 @@
 {
-  "name": "Design Version Control",
-  "id": "com.yourname.design-version-control",
+  "name": "Version Control Plugin",
+  "id": "com.bankole-ayobami.design-version-control",
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",

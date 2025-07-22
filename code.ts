@@ -1,29 +1,25 @@
 /// <reference types="@figma/plugin-typings" />
 
-figma.showUI(__html__, { width: 320, height: 200 });
+figma.showUI(__html__, { width: 400, height: 600 });
 
+// Send project name to UI on load
+figma.ui.postMessage({ type: 'init', projectName: figma.root.name });
+
+// Handle messages from UI
 figma.ui.onmessage = async (msg) => {
-  if (msg.type === 'export-selection') {
-    const selection = figma.currentPage.selection;
-    if (selection.length !== 1) {
-      figma.notify("⚠️ Select exactly one frame or group.");
-      return;
-    }
-
-    const node = selection[0];
-    if (!("exportAsync" in node)) {
-      figma.notify("❌ Cannot export that node.");
+  if (msg.type === 'export-svg') {
+    const sel = figma.currentPage.selection;
+    if (!sel.length) {
+      figma.notify('Select a frame');
       return;
     }
 
     try {
-      const svgBytes = await node.exportAsync({ format: "SVG" });
-      // Send raw bytes array to UI
-      figma.ui.postMessage({ type: 'svg-bytes', bytes: Array.from(svgBytes) });
-      // don’t close the plugin — let the UI handle it
+      const bytes = await sel[0].exportAsync({ format: 'SVG' });
+      const svgStr = new TextDecoder().decode(bytes);
+      figma.ui.postMessage({ type: 'svg', svg: btoa(svgStr) });
     } catch (err) {
-      figma.notify("❌ Export failed – see console.");
-      console.error("SVG export error:", err);
+      figma.notify('Export failed');
     }
   }
 };
