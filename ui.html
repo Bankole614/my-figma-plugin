@@ -6,8 +6,8 @@
   <style>
     body { font-family: sans-serif; margin: 20px; }
     #login, #projects, #main { margin-bottom: 20px; }
-    input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 6px; }
-    #projectList { list-style: none; padding: 0; }
+    input, textarea, select, button { width: 100%; box-sizing: border-box; margin-top: 6px; }
+    #projectList, #historyList { list-style: none; padding: 0; }
     li { cursor: pointer; padding: 4px; border-bottom: 1px solid #ddd; }
     li:hover { background: #f0f0f0; }
   </style>
@@ -37,139 +37,214 @@
   <!-- MAIN (after project selected) -->
   <div id="main" style="display:none">
     <h3 id="selProjectName"></h3>
-    <!-- Commit UI goes here -->
+
+    <!-- Branch selector -->
+    <label for="branchSelect">Branch:</label>
+    <select id="branchSelect"></select>
+    <input id="newBranchName" placeholder="New branch name" />
+    <button id="btnCreateBranch">Create Branch</button>
+    <p id="branchError" style="color:red"></p>
+
+    <!-- Commit UI -->
+    <textarea id="commitMessage" rows="3" placeholder="Commit message"></textarea>
+    <button id="btnCommit">Commit Version</button>
+    <ul id="historyList"></ul>
   </div>
 
   <script>
-const BACKEND = 'https://design-vc-backend.vercel.app/api';
-let jwt = null;
-let selectedProject = null;
+    const BACKEND = 'https://design-vc-backend.vercel.app/api';
+    let jwt = null;
+    let selectedProject = null;
+    let selectedBranchId = null;
 
-// DOM elements
-const loginDiv = document.getElementById('login');
-const projectsDiv = document.getElementById('projects');
-const mainDiv = document.getElementById('main');
+    // DOM elements
+    const loginDiv        = document.getElementById('login');
+    const projectsDiv     = document.getElementById('projects');
+    const mainDiv         = document.getElementById('main');
 
-const emailInput = document.getElementById('emailInput');
-const passwordInput = document.getElementById('passwordInput');
-const btnLogin = document.getElementById('btnLogin');
-const loginError = document.getElementById('loginError');
+    const emailInput      = document.getElementById('emailInput');
+    const passwordInput   = document.getElementById('passwordInput');
+    const btnLogin        = document.getElementById('btnLogin');
+    const loginError      = document.getElementById('loginError');
 
-const newNameInput = document.getElementById('newName');
-const newDescInput = document.getElementById('newDesc');
-const btnCreate = document.getElementById('btnCreate');
-const projError = document.getElementById('projError');
-const projectList = document.getElementById('projectList');
-const selProjectName = document.getElementById('selProjectName');
+    const newNameInput    = document.getElementById('newName');
+    const newDescInput    = document.getElementById('newDesc');
+    const btnCreate       = document.getElementById('btnCreate');
+    const projError       = document.getElementById('projError');
+    const projectList     = document.getElementById('projectList');
 
-// Show/hide UI panels
-function showLogin() { loginDiv.style.display = 'block'; projectsDiv.style.display = 'none'; mainDiv.style.display = 'none'; }
-function showProjects() { loginDiv.style.display = 'none'; projectsDiv.style.display = 'block'; mainDiv.style.display = 'none'; }
-function showMain() { loginDiv.style.display = 'none'; projectsDiv.style.display = 'none'; mainDiv.style.display = 'block'; }
+    const selProjectName  = document.getElementById('selProjectName');
+    const branchSelect    = document.getElementById('branchSelect');
+    const newBranchName   = document.getElementById('newBranchName');
+    const btnCreateBranch = document.getElementById('btnCreateBranch');
+    const branchError     = document.getElementById('branchError');
 
-// Auto-login if JWT exists
-// (async () => {
-//   jwt = localStorage.getItem('jwt');
-//   if (jwt) {
-//     showProjects();
-//     loadProjects();
-//   }
-// })();
+    const commitMessage   = document.getElementById('commitMessage');
+    const btnCommit       = document.getElementById('btnCommit');
+    const historyList     = document.getElementById('historyList');
 
-// LOGIN
-btnLogin.onclick = async () => {
-  loginError.textContent = '';
-  const emailVal = emailInput.value.trim();
-  const pwVal = passwordInput.value;
+    // Show/hide UI panels
+    function showLogin()    { loginDiv.style.display='block'; projectsDiv.style.display='none'; mainDiv.style.display='none'; }
+    function showProjects(){ loginDiv.style.display='none'; projectsDiv.style.display='block'; mainDiv.style.display='none'; }
+    function showMain()     { loginDiv.style.display='none'; projectsDiv.style.display='none'; mainDiv.style.display='block'; }
 
-  if (!emailVal || !pwVal) {
-    loginError.textContent = 'Enter email + password';
-    return;
-  }
+    // LOGIN
+    btnLogin.onclick = async () => {
+      loginError.textContent = '';
+      const emailVal = emailInput.value.trim();
+      const pwVal = passwordInput.value;
+      if (!emailVal || !pwVal) { loginError.textContent='Enter email + password'; return; }
 
-  try {
-    const res = await fetch(`${BACKEND}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: emailVal, password: pwVal })
-    });
+      try {
+        const res = await fetch(`${BACKEND}/auth/login`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ email: emailVal, password: pwVal })
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error||'Login failed');
+        jwt = json.token;
+        showProjects();
+        loadProjects();
+      } catch (err) {
+        loginError.textContent = err.message;
+      }
+    };
 
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Login failed');
+    // LOAD PROJECTS
+    async function loadProjects() {
+      projError.textContent = '';
+      projectList.innerHTML = '';
+      try {
+        const res = await fetch(`${BACKEND}/projects`, {
+          headers:{ 'Authorization':'Bearer '+jwt }
+        });
+        if (!res.ok) throw new Error('Fetch failed');
+        const { own, shared } = await res.json();
+        own.concat(shared).forEach(p => {
+          const li = document.createElement('li');
+          li.textContent = p.name;
+          li.onclick = () => selectProject(p);
+          projectList.appendChild(li);
+        });
+      } catch (err) {
+        projError.textContent = err.message;
+      }
+    }
 
-    jwt = json.token;
-    // localStorage.setItem('jwt', jwt);
-    showProjects();
-    loadProjects();
-  } catch (err) {
-    loginError.textContent = err.message;
-  }
-};
+    function selectProject(p) {
+      selectedProject = p;
+      selProjectName.innerText = p.name;
+      showMain();
+      loadBranches();
+      loadHistory(); // initial history load
+    }
 
-// LOAD PROJECTS
-async function loadProjects() {
-  projError.textContent = '';
-  projectList.innerHTML = '';
+    // CREATE PROJECT
+    btnCreate.onclick = async () => {
+      projError.textContent = '';
+      const nameVal = newNameInput.value.trim();
+      if (!nameVal) { projError.textContent='Project name required'; return; }
+      try {
+        const res = await fetch(`${BACKEND}/projects`, {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'Authorization':'Bearer '+jwt
+          },
+          body: JSON.stringify({ name: nameVal, description: newDescInput.value.trim() })
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error||'Create failed');
+        newNameInput.value = ''; newDescInput.value = '';
+        loadProjects();
+      } catch (err) {
+        projError.textContent = err.message;
+      }
+    };
 
-  try {
-    const res = await fetch(`${BACKEND}/projects`, {
-      headers: { 'Authorization': 'Bearer ' + jwt }
-    });
+    // LOAD BRANCHES
+    async function loadBranches() {
+      branchError.textContent = '';
+      branchSelect.innerHTML = '';
+      try {
+        const res = await fetch(`${BACKEND}/projects/${selectedProject.id}/branches`, {
+          headers:{ 'Authorization':'Bearer '+jwt }
+        });
+        if (!res.ok) throw new Error('Could not load branches');
+        const { branches } = await res.json();
+        branches.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = b.id; opt.textContent = b.name;
+          branchSelect.appendChild(opt);
+        });
+        if (branches.length) {
+          selectedBranchId = branches[0].id;
+          branchSelect.value = selectedBranchId;
+        }
+      } catch (err) {
+        branchError.textContent = err.message;
+      }
+    }
+    branchSelect.onchange = () => selectedBranchId = Number(branchSelect.value);
 
-    if (!res.ok) throw new Error('Fetch failed');
+    // CREATE BRANCH
+    btnCreateBranch.onclick = async () => {
+      branchError.textContent = '';
+      const nameVal = newBranchName.value.trim();
+      if (!nameVal) { branchError.textContent='Branch name required'; return; }
+      try {
+        const res = await fetch(`${BACKEND}/projects/${selectedProject.id}/branches`, {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'Authorization':'Bearer '+jwt
+          },
+          body: JSON.stringify({ name: nameVal })
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error||'Create branch failed');
+        newBranchName.value = '';
+        await loadBranches();
+        branchSelect.value = json.branch.id;
+        selectedBranchId = json.branch.id;
+      } catch (err) {
+        branchError.textContent = err.message;
+      }
+    };
 
-    const { own, shared } = await res.json();
-    const all = own.concat(shared);
+    // HANDLE SVG export response & COMMIT
+    window.onmessage = async ({ data }) => {
+      if (data.pluginMessage?.type === 'svg') {
+        const svgB64 = data.pluginMessage.svg;
+        // 1) uploadBase64(svgB64) → get fileUrl
+        // 2) POST /branches/{selectedBranchId}/versions { commit_message, file_url }
+        // 3) loadHistory();
+      }
+    };
+    btnCommit.onclick = () => {
+      if (!selectedBranchId) { alert('Pick a branch first'); return; }
+      parent.postMessage({ pluginMessage:{ type:'export-svg' } }, '*');
+    };
 
-    all.forEach(p => {
-      const li = document.createElement('li');
-      li.textContent = p.name;
-      li.onclick = () => {
-        selectedProject = p;
-        selProjectName.innerText = p.name;
-        showMain();
-        // You can add commit UI or send message to code.ts here
-      };
-      projectList.appendChild(li);
-    });
-  } catch (err) {
-    projError.textContent = err.message;
-  }
-}
-
-// CREATE PROJECT
-btnCreate.onclick = async () => {
-  projError.textContent = '';
-  const nameVal = newNameInput.value.trim();
-  const descVal = newDescInput.value.trim();
-
-  if (!nameVal) {
-    projError.textContent = 'Project name required';
-    return;
-  }
-
-  try {
-    const res = await fetch(`${BACKEND}/projects`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + jwt
-      },
-      body: JSON.stringify({ name: nameVal, description: descVal })
-    });
-
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Create failed');
-
-    newNameInput.value = '';
-    newDescInput.value = '';
-    loadProjects();
-  } catch (err) {
-    projError.textContent = err.message;
-  }
-};
-</script>
-
-
+    // LOAD HISTORY
+    async function loadHistory() {
+      historyList.innerHTML = '';
+      try {
+        const res = await fetch(`${BACKEND}/branches/${selectedBranchId}/versions`, {
+          headers:{ 'Authorization':'Bearer '+jwt }
+        });
+        if (!res.ok) throw new Error('Failed to load history');
+        const { versions } = await res.json();
+        versions.forEach(v => {
+          const li = document.createElement('li');
+          li.textContent = `${new Date(v.created_at).toLocaleString()}: ${v.commit_message}`;
+          historyList.appendChild(li);
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  </script>
 </body>
 </html>
