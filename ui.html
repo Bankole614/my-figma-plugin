@@ -1,250 +1,293 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Design VC Plugin</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; }
-    #login, #projects, #main { margin-bottom: 20px; }
-    input, textarea, select, button { width: 100%; box-sizing: border-box; margin-top: 6px; }
-    #projectList, #historyList { list-style: none; padding: 0; }
-    li { cursor: pointer; padding: 4px; border-bottom: 1px solid #ddd; }
-    li:hover { background: #f0f0f0; }
-  </style>
-</head>
-<body>
+<html><head>
+<meta charset="utf-8">
+<title>Design VC Plugin</title>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  section { margin-bottom: 24px; }
+  input, textarea, button { width: 100%; box-sizing: border-box; margin: 6px 0; }
+  ul { list-style: none; padding: 0; max-height: 150px; overflow-y: auto; }
+  li { padding: 6px; border-bottom: 1px solid #ddd; cursor: pointer; }
+  li:hover { background: #f0f0f0; }
+  .hidden { display: none; }
+  .selected { background: #d0f0ff; }
+</style>
+</head><body>
 
-  <!-- LOGIN UI -->
-  <div id="login">
-    <h3>Login</h3>
-    <input id="emailInput" type="email" placeholder="Email" />
-    <input id="passwordInput" type="password" placeholder="Password" />
-    <button id="btnLogin">Log In</button>
-    <p id="loginError" style="color:red"></p>
-  </div>
+<!-- AUTH -->
+<section id="auth">
+  <h3>Login / Sign-Up</h3>
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button id="btnLogin">Log In</button>
+  <button id="btnSignup">Sign Up</button>
+  <p id="authError" style="color:red"></p>
+</section>
 
-  <!-- PROJECT SELECTION UI -->
-  <div id="projects" style="display:none">
-    <h3>Your Projects</h3>
-    <ul id="projectList"></ul>
-    <h4>Create New Project</h4>
-    <input id="newName" placeholder="Project Name" />
-    <textarea id="newDesc" rows="2" placeholder="Description (optional)"></textarea>
-    <button id="btnCreate">Create Project</button>
-    <p id="projError" style="color:red"></p>
-  </div>
+<!-- PROJECTS -->
+<section id="projects" class="hidden">
+  <h3>Your Projects</h3>
+  <ul id="projectList"></ul>
+  <h4>Create Project</h4>
+  <input id="newProjName" placeholder="Project Name">
+  <textarea id="newProjDesc" rows="2" placeholder="Description"></textarea>
+  <button id="btnCreateProj">Create Project</button>
+  <p id="projError" style="color:red"></p>
+</section>
 
-  <!-- MAIN (after project selected) -->
-  <div id="main" style="display:none">
-    <h3 id="selProjectName"></h3>
+<!-- BRANCHES -->
+<section id="branches" class="hidden">
+  <h3>Branches for <span id="branchProjName"></span></h3>
+  <ul id="branchList"></ul>
+  <h4>Create Branch</h4>
+  <input id="newBranchName" placeholder="Branch Name">
+  <button id="btnCreateBranch">Create Branch</button>
+  <p id="branchError" style="color:red"></p>
+</section>
 
-    <!-- Branch selector -->
-    <label for="branchSelect">Branch:</label>
-    <select id="branchSelect"></select>
-    <input id="newBranchName" placeholder="New branch name" />
-    <button id="btnCreateBranch">Create Branch</button>
-    <p id="branchError" style="color:red"></p>
+<!-- VERSIONS -->
+<section id="versions" class="hidden">
+  <h3>Versions in <span id="currentProjName"></span> / <span id="currentBranchName"></span></h3>
+  <ul id="versionList"></ul>
+  <h4>Create Version</h4>
+  <input id="newVerName" placeholder="Version Name">
+  <textarea id="newVerNotes" rows="2" placeholder="Notes"></textarea>
+  <button id="btnCreateVer">Create Version</button>
+  <p id="verError" style="color:red"></p>
+</section>
 
-    <!-- Commit UI -->
-    <textarea id="commitMessage" rows="3" placeholder="Commit message"></textarea>
-    <button id="btnCommit">Commit Version</button>
-    <ul id="historyList"></ul>
-  </div>
+<!-- COMMIT -->
+<section id="commit" class="hidden">
+  <h3>Commit to Version <span id="currentVersionName"></span></h3>
+  <button id="btnCommit">Export & Commit SVG</button>
+  <p id="commitError" style="color:red"></p>
+  <p id="commitSuccess" style="color:green"></p>
+</section>
 
-  <script>
-    const BACKEND = 'https://design-vc-backend.vercel.app/api';
-    let jwt = null;
-    let selectedProject = null;
-    let selectedBranchId = null;
+<script>
+  // ══ CONFIG — replace these five with your HiSend values
+  const HISEND_BASE    = 'https://hisend.hunnovate.com/api/v1';
+  const PROJECT_ID     = '01k1nsj4k9neaj78pbr8gm4qh0';
+  const API_KEY        = 'PUImem8lZ9cmV4DwWlXHlckJ';
+  const TABLE_PROJECTS = '<YOUR_PROJECTS_TABLE_ID>';
+  const TABLE_BRANCHES = '<YOUR_BRANCHES_TABLE_ID>';
+  const TABLE_VERSIONS = '<YOUR_VERSIONS_TABLE_ID>';
+  // ════════════════════════════
 
-    // DOM elements
-    const loginDiv        = document.getElementById('login');
-    const projectsDiv     = document.getElementById('projects');
-    const mainDiv         = document.getElementById('main');
+  let authToken = null;
+  let currentProject = null;
+  let currentBranch = null;
+  let currentVersion = null;
 
-    const emailInput      = document.getElementById('emailInput');
-    const passwordInput   = document.getElementById('passwordInput');
-    const btnLogin        = document.getElementById('btnLogin');
-    const loginError      = document.getElementById('loginError');
+  const el = id => document.getElementById(id);
+  const auth      = el('auth');
+  const projects  = el('projects');
+  const branches  = el('branches');
+  const versions  = el('versions');
+  const commitSec = el('commit');
 
-    const newNameInput    = document.getElementById('newName');
-    const newDescInput    = document.getElementById('newDesc');
-    const btnCreate       = document.getElementById('btnCreate');
-    const projError       = document.getElementById('projError');
-    const projectList     = document.getElementById('projectList');
+  const email     = el('email');
+  const password  = el('password');
+  const btnLogin  = el('btnLogin');
+  const btnSignup = el('btnSignup');
+  const authError = el('authError');
 
-    const selProjectName  = document.getElementById('selProjectName');
-    const branchSelect    = document.getElementById('branchSelect');
-    const newBranchName   = document.getElementById('newBranchName');
-    const btnCreateBranch = document.getElementById('btnCreateBranch');
-    const branchError     = document.getElementById('branchError');
+  const projectList    = el('projectList');
+  const newProjName    = el('newProjName');
+  const newProjDesc    = el('newProjDesc');
+  const btnCreateProj  = el('btnCreateProj');
+  const projError      = el('projError');
 
-    const commitMessage   = document.getElementById('commitMessage');
-    const btnCommit       = document.getElementById('btnCommit');
-    const historyList     = document.getElementById('historyList');
+  const branchProjName   = el('branchProjName');
+  const branchList       = el('branchList');
+  const newBranchName    = el('newBranchName');
+  const btnCreateBranch  = el('btnCreateBranch');
+  const branchError      = el('branchError');
 
-    // Show/hide UI panels
-    function showLogin()    { loginDiv.style.display='block'; projectsDiv.style.display='none'; mainDiv.style.display='none'; }
-    function showProjects(){ loginDiv.style.display='none'; projectsDiv.style.display='block'; mainDiv.style.display='none'; }
-    function showMain()     { loginDiv.style.display='none'; projectsDiv.style.display='none'; mainDiv.style.display='block'; }
+  const currentProjName   = el('currentProjName');
+  const currentBranchName = el('currentBranchName');
+  const versionList       = el('versionList');
+  const newVerName        = el('newVerName');
+  const newVerNotes       = el('newVerNotes');
+  const btnCreateVer      = el('btnCreateVer');
+  const verError          = el('verError');
 
-    // LOGIN
-    btnLogin.onclick = async () => {
-      loginError.textContent = '';
-      const emailVal = emailInput.value.trim();
-      const pwVal = passwordInput.value;
-      if (!emailVal || !pwVal) { loginError.textContent='Enter email + password'; return; }
+  const currentVersionName = el('currentVersionName');
+  const btnCommit          = el('btnCommit');
+  const commitError        = el('commitError');
+  const commitSuccess      = el('commitSuccess');
 
+  function show(...els) {
+    [auth, projects, branches, versions, commitSec].forEach(e => e.classList.add('hidden'));
+    els.forEach(e => e.classList.remove('hidden'));
+  }
+
+  async function api(path, opts={}) {
+    const headers = opts.headers||{};
+    headers['Content-Type']='application/json';
+    if (authToken) headers['Authorization']='Bearer '+authToken;
+    const url = `${HISEND_BASE}/projects/${PROJECT_ID}/${path}?api_key=${API_KEY}`;
+    const res = await fetch(url, {...opts, headers});
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error||'API error');
+    return payload.data||payload;
+  }
+
+  function listToElement(listEl, items, onClick, selectedId) {
+    listEl.innerHTML = '';
+    items.forEach(it => {
+      const li = document.createElement('li');
+      li.textContent = it.name || it.branch_name || it.version_name;
+      if (it.id === selectedId) li.classList.add('selected');
+      li.onclick = () => onClick(it);
+      listEl.appendChild(li);
+    });
+  }
+
+  // ─── AUTH ─────────────────────────────────
+  btnSignup.onclick = async () => {
+    authError.textContent = '';
+    try {
+      await api('auth/sign-up', {
+        method:'POST',
+        body: JSON.stringify({
+          email, password,
+          password_confirmation: password.value
+        }.reduce((o,k)=>{o[k]=el(k).value;return o},{}))
+      });
+      return btnLogin.onclick();
+    } catch(err) {
+      authError.textContent = err.message;
+    }
+  };
+
+  btnLogin.onclick = async () => {
+    authError.textContent = '';
+    try {
+      const resp = await api('auth/login', {
+        method:'POST',
+        body: JSON.stringify({
+          email: email.value,
+          password: password.value
+        })
+      });
+      authToken = resp.token;
+      loadProjects();
+    } catch(err) {
+      authError.textContent = err.message;
+    }
+  };
+
+  // ─── PROJECTS ───────────────────────────────
+  async function loadProjects() {
+    show(projects);
+    const {records} = await api(`tables/${TABLE_PROJECTS}/records`);
+    listToElement(projectList, records, selectProject);
+  }
+
+  btnCreateProj.onclick = async () => {
+    projError.textContent = '';
+    if (!newProjName.value.trim()) return projError.textContent='Name required';
+    await api(`tables/${TABLE_PROJECTS}/records`, {
+      method:'POST',
+      body: JSON.stringify({
+        name: newProjName.value.trim(),
+        description: newProjDesc.value.trim()
+      })
+    });
+    newProjName.value=''; newProjDesc.value='';
+    loadProjects();
+  };
+
+  function selectProject(p) {
+    currentProject = p;
+    loadBranches();
+  }
+
+  // ─── BRANCHES ───────────────────────────────
+  async function loadBranches() {
+    show(branches);
+    branchProjName.textContent = currentProject.name;
+    const {records} = await api(`tables/${TABLE_BRANCHES}/records`);
+    const filtered = records.filter(r=>r.project_id===currentProject.id);
+    listToElement(branchList, filtered, selectBranch);
+  }
+
+  btnCreateBranch.onclick = async () => {
+    branchError.textContent = '';
+    if (!newBranchName.value.trim()) return branchError.textContent='Name required';
+    await api(`tables/${TABLE_BRANCHES}/records`, {
+      method:'POST',
+      body: JSON.stringify({
+        branch_name: newBranchName.value.trim(),
+        project_id: currentProject.id
+      })
+    });
+    newBranchName.value='';
+    loadBranches();
+  };
+
+  function selectBranch(b) {
+    currentBranch = b;
+    loadVersions();
+  }
+
+  // ─── VERSIONS ───────────────────────────────
+  async function loadVersions() {
+    show(versions);
+    currentProjName.textContent   = currentProject.name;
+    currentBranchName.textContent = currentBranch.branch_name;
+    const {records} = await api(`tables/${TABLE_VERSIONS}/records`);
+    const filtered = records.filter(r=>
+      r.project_id===currentProject.id && r.branch_id===currentBranch.id
+    );
+    listToElement(versionList, filtered, selectVersion);
+  }
+
+  btnCreateVer.onclick = async () => {
+    verError.textContent = '';
+    if (!newVerName.value.trim()) return verError.textContent='Name required';
+    await api(`tables/${TABLE_VERSIONS}/records`, {
+      method:'POST',
+      body: JSON.stringify({
+        version_name: newVerName.value.trim(),
+        notes:        newVerNotes.value.trim(),
+        project_id:   currentProject.id,
+        branch_id:    currentBranch.id
+      })
+    });
+    newVerName.value=''; newVerNotes.value='';
+    loadVersions();
+  };
+
+  function selectVersion(v) {
+    currentVersion = v;
+    currentVersionName.textContent = v.version_name;
+    show(commitSec);
+  }
+
+  // ─── COMMIT ────────────────────────────────
+  btnCommit.onclick = () => {
+    commitError.textContent = '';
+    commitSuccess.textContent = '';
+    parent.postMessage({ pluginMessage: { type: 'export-svg' } }, '*');
+  };
+
+  // catch the SVG from code.ts
+  window.onmessage = async (event) => {
+    const msg = event.data.pluginMessage;
+    if (msg.type === 'svg') {
       try {
-        const res = await fetch(`${BACKEND}/auth/login`, {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json' },
-          body: JSON.stringify({ email: emailVal, password: pwVal })
+        await api(`tables/${TABLE_VERSIONS}/records/${currentVersion.id}`, {
+          method:'PUT',
+          body: JSON.stringify({ svg_data: msg.svg })
         });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error||'Login failed');
-        jwt = json.token;
-        showProjects();
-        loadProjects();
+        commitSuccess.textContent = 'Commit successful!';
       } catch (err) {
-        loginError.textContent = err.message;
-      }
-    };
-
-    // LOAD PROJECTS
-    async function loadProjects() {
-      projError.textContent = '';
-      projectList.innerHTML = '';
-      try {
-        const res = await fetch(`${BACKEND}/projects`, {
-          headers:{ 'Authorization':'Bearer '+jwt }
-        });
-        if (!res.ok) throw new Error('Fetch failed');
-        const { own, shared } = await res.json();
-        own.concat(shared).forEach(p => {
-          const li = document.createElement('li');
-          li.textContent = p.name;
-          li.onclick = () => selectProject(p);
-          projectList.appendChild(li);
-        });
-      } catch (err) {
-        projError.textContent = err.message;
+        commitError.textContent = err.message;
       }
     }
+  };
 
-    function selectProject(p) {
-      selectedProject = p;
-      selProjectName.innerText = p.name;
-      showMain();
-      loadBranches();
-      loadHistory(); // initial history load
-    }
-
-    // CREATE PROJECT
-    btnCreate.onclick = async () => {
-      projError.textContent = '';
-      const nameVal = newNameInput.value.trim();
-      if (!nameVal) { projError.textContent='Project name required'; return; }
-      try {
-        const res = await fetch(`${BACKEND}/projects`, {
-          method:'POST',
-          headers:{
-            'Content-Type':'application/json',
-            'Authorization':'Bearer '+jwt
-          },
-          body: JSON.stringify({ name: nameVal, description: newDescInput.value.trim() })
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error||'Create failed');
-        newNameInput.value = ''; newDescInput.value = '';
-        loadProjects();
-      } catch (err) {
-        projError.textContent = err.message;
-      }
-    };
-
-    // LOAD BRANCHES
-    async function loadBranches() {
-      branchError.textContent = '';
-      branchSelect.innerHTML = '';
-      try {
-        const res = await fetch(`${BACKEND}/projects/${selectedProject.id}/branches`, {
-          headers:{ 'Authorization':'Bearer '+jwt }
-        });
-        if (!res.ok) throw new Error('Could not load branches');
-        const { branches } = await res.json();
-        branches.forEach(b => {
-          const opt = document.createElement('option');
-          opt.value = b.id; opt.textContent = b.name;
-          branchSelect.appendChild(opt);
-        });
-        if (branches.length) {
-          selectedBranchId = branches[0].id;
-          branchSelect.value = selectedBranchId;
-        }
-      } catch (err) {
-        branchError.textContent = err.message;
-      }
-    }
-    branchSelect.onchange = () => selectedBranchId = Number(branchSelect.value);
-
-    // CREATE BRANCH
-    btnCreateBranch.onclick = async () => {
-      branchError.textContent = '';
-      const nameVal = newBranchName.value.trim();
-      if (!nameVal) { branchError.textContent='Branch name required'; return; }
-      try {
-        const res = await fetch(`${BACKEND}/projects/${selectedProject.id}/branches`, {
-          method:'POST',
-          headers:{
-            'Content-Type':'application/json',
-            'Authorization':'Bearer '+jwt
-          },
-          body: JSON.stringify({ name: nameVal })
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error||'Create branch failed');
-        newBranchName.value = '';
-        await loadBranches();
-        branchSelect.value = json.branch.id;
-        selectedBranchId = json.branch.id;
-      } catch (err) {
-        branchError.textContent = err.message;
-      }
-    };
-
-    // HANDLE SVG export response & COMMIT
-    window.onmessage = async ({ data }) => {
-      if (data.pluginMessage?.type === 'svg') {
-        const svgB64 = data.pluginMessage.svg;
-        // 1) uploadBase64(svgB64) → get fileUrl
-        // 2) POST /branches/{selectedBranchId}/versions { commit_message, file_url }
-        // 3) loadHistory();
-      }
-    };
-    btnCommit.onclick = () => {
-      if (!selectedBranchId) { alert('Pick a branch first'); return; }
-      parent.postMessage({ pluginMessage:{ type:'export-svg' } }, '*');
-    };
-
-    // LOAD HISTORY
-    async function loadHistory() {
-      historyList.innerHTML = '';
-      try {
-        const res = await fetch(`${BACKEND}/branches/${selectedBranchId}/versions`, {
-          headers:{ 'Authorization':'Bearer '+jwt }
-        });
-        if (!res.ok) throw new Error('Failed to load history');
-        const { versions } = await res.json();
-        versions.forEach(v => {
-          const li = document.createElement('li');
-          li.textContent = `${new Date(v.created_at).toLocaleString()}: ${v.commit_message}`;
-          historyList.appendChild(li);
-        });
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  </script>
-</body>
-</html>
+</script>
+</body></html>
